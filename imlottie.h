@@ -27,12 +27,18 @@
 #include <queue>
 #include <string>
 #include <unordered_map>
+#include <cassert>
 
 #include "imgui.h"
+#include "imgui_internal.h"
 
 #ifdef IMLOTTIE_DX11_IMPLEMENTATION
 #include <d3d11.h>
 #endif // IMLOTTIE_DX11_IMPLEMENTATION
+
+#ifdef IMLOTTIE_OPENGL_IMPLEMENTATION
+#include <glad/glad.h>
+#endif
 
 namespace imlottie { 
     class Animation;
@@ -88,6 +94,10 @@ struct LottieAnim {
     ID3D11Texture2D* texture = nullptr;
     ID3D11ShaderResourceView *srv = nullptr;
 #endif // IMLOTTIE_DX11_IMPLEMENTATION
+#ifdef IMLOTTIE_OPENGL_IMPLEMENTATION
+    bool texture = false;
+    GLuint srv = 0;
+#endif
     struct {
         int width = DEFAULT_SIZE;
         int height = DEFAULT_SIZE;
@@ -300,6 +310,46 @@ struct LottieAnim {
         return true;
     }
 #endif // IMLOTTIE_DX11_IMPLEMENTATION
+
+#ifdef IMLOTTIE_OPENGL_IMPLEMENTATION
+    bool createTextureFromData(uint8_t *image_data) {
+        if (image_data == NULL) {
+            return false;
+        }
+        auto& self = *this;
+        glGenTextures(1, &srv);
+        glBindTexture(GL_TEXTURE_2D, srv);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+#if defined(HELLOIMGUI_USE_GLES2) || defined(HELLOIMGUI_USE_GLES3)
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+#endif
+        glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA,
+                     canvas.width,
+                     canvas.height, 0, GL_RGBA, GL_UNSIGNED_BYTE, image_data);
+        glBindTexture(GL_TEXTURE_2D, 0);
+        texture = true;
+        return glGetError() == GL_NO_ERROR;
+    }
+
+    bool updateTextureFromData(unsigned char* image_data)
+    {
+        if (image_data == NULL) {
+            return false;
+        }
+
+        // glDeleteTextures(1, &srv);
+        // return createTextureFromData(image_data);
+        glBindTexture(GL_TEXTURE_2D, srv);
+        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0,
+                     canvas.width,
+                     canvas.height, GL_RGBA, GL_UNSIGNED_BYTE, image_data);
+        glBindTexture(GL_TEXTURE_2D, 0);
+        return glGetError() == GL_NO_ERROR;
+    }
+#endif
 };
 
 struct LottieRenderCommand {
@@ -564,6 +614,29 @@ struct LottieAnimationRenderer {
     }
 #endif // IMLOTTIE_DX11_IMPLEMENTATION
 
+#ifdef IMLOTTIE_OPENGL_IMPLEMENTATION
+    void uploadReadyFramesToSysTex() {
+        // prepared frames stored in readyFrames array now (in system memory)
+        // but need move those to gpu memory with textures
+        ReadyFrame readyFrame;
+        while (renderThread.popReadyFrame(readyFrame)) {
+            const auto &it = renderThread.animations.find(readyFrame.pid);
+
+            if (!it->second.texture) {
+                it->second.createTextureFromData(readyFrame.data.data());
+                auto rit = std::find_if(animationsPresent.begin(), animationsPresent.end(), [pid = it->second.pid] (auto &a) { return a.second.pid == pid; });
+                if (rit != animationsPresent.end())
+                    rit->second.srv = (ImTextureID)(intptr_t)it->second.srv;
+                break;
+            } else {
+                it->second.updateTextureFromData(readyFrame.data.data());
+            }
+        }
+
+        renderThread.curtime = (float)ImGui::GetTime() * 1000.f;
+    }
+#endif
+
     LottieAnimationRenderer() {
         std::thread independedThread([this] () { renderThread.execute(); });
         independedThread.detach();
@@ -620,7 +693,7 @@ void sync(Args... args) {
     if (detail::g_lottieRenderer) {
         detail::g_lottieRenderer->uploadReadyFramesToSysTex(args...);
     }
-} 
+}
 
 #ifdef IMLOTTIE_DEMO
 void demoAnimations(const std::string &demo_folder) {
@@ -651,7 +724,7 @@ void demoAnimations(const std::string &demo_folder) {
     //next line
     ImLottie::LottieAnimation(_("runcycle.json").c_str(), ImVec2(64, 64), true, 0); ImGui::SameLine();
     ImLottie::LottieAnimation(_("email.json").c_str(), ImVec2(64, 64), true, 0); ImGui::SameLine();
-    ImLottie::LottieAnimation(_("conused.json").c_str(), ImVec2(64, 64), true, 0);
+    ImLottie::LottieAnimation(_("confused.json").c_str(), ImVec2(64, 64), true, 0);
 
     ImGui::End();
 }
