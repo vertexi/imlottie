@@ -2217,6 +2217,7 @@ public:
 };
 
 struct Operator;
+struct VSpanData;
 typedef void (*CompositionFunctionSolid)(uint32_t *dest, int length, uint32_t color, uint32_t const_alpha);
 typedef void (*CompositionFunction)(uint32_t *dest, const uint32_t *src, int length, uint32_t const_alpha);
 typedef void (*SourceFetchProc)(uint32_t *buffer, const Operator *o, const VSpanData *data, int y, int x, int length);
@@ -2748,6 +2749,12 @@ struct LOTModelStat
     uint16_t nullLayerCount{0};
 
 };
+
+template<typename T>
+inline T lerp(const T& start, const T& end, float t)
+{
+    return start + t * (end - start);
+}
 
 template <typename T>
 struct LOTKeyFrameValue {
@@ -3759,11 +3766,6 @@ inline const LottieColor operator*(const LottieColor &c, float m)
 inline const LottieColor operator*(float m, const LottieColor &c)
 { return LottieColor(c.r*m, c.g*m, c.b*m); }
 
-template<typename T>
-inline T lerp(const T& start, const T& end, float t)
-{
-    return start + t * (end - start);
-}
 
 template <>
 struct LOTKeyFrameValue<VPointF>

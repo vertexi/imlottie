@@ -37,7 +37,11 @@
 #endif // IMLOTTIE_DX11_IMPLEMENTATION
 
 #ifdef IMLOTTIE_OPENGL_IMPLEMENTATION
+#ifdef HELLOIMGUI_HAS_OPENGL
+#include "hello_imgui/hello_imgui_include_opengl.h"
+#else
 #include <glad/glad.h>
+#endif
 #endif
 
 namespace imlottie { 
