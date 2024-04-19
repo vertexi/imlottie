@@ -129,6 +129,9 @@ struct LottieAnim {
     // here saved frame, which need for display, on every render()
     // call prerendered frame will moved here when time for next frame gone
     ReadyFrame currentFrame;
+#ifdef IMLOTTIE_SIMPLE_IMPLEMENTATION
+    bool currentFrameRendering = true;
+#endif
 
     // Grabs the current frame and stores it in the "f" parameter
     bool grabCurrentFrame(ReadyFrame &f) {
@@ -177,6 +180,32 @@ struct LottieAnim {
 
         return true;
     }
+#ifdef IMLOTTIE_SIMPLE_IMPLEMENTATION
+    bool updateCurtimeFrame(uint32_t curTime) {
+        if (pid == BAD_PICTUREID || !(play || renderonce))
+            return false;
+
+        renderonce = false;
+        if (!loop && frame.current > frame.total)
+            return false;
+
+        if ((curTime - timeline.last_ms) >= timeline.duration_ms) {
+            currentFrameRendering = true;
+            uint32_t frameDiff = (curTime - timeline.last_ms) / timeline.duration_ms;
+            frame.current += frameDiff;
+            timeline.last_ms += frameDiff * timeline.duration_ms;
+            if (loop) {
+                frame.current %= frame.total;
+            }
+            size_t bufferSize = canvas.width * canvas.height * LOTTIE_SURFACE_FMT_BPP;
+            currentFrame.data.resize(bufferSize);
+            imlottie::animationRenderSync(anim, frame.current, (uint32_t*)currentFrame.data.data(), canvas.width, canvas.height, canvas.width * LOTTIE_SURFACE_FMT_BPP);
+            currentFrameRendering = false;
+            return true;
+        }
+        return false;
+    }
+#endif
 
     bool render(uint32_t curTime) {
         if (pid == BAD_PICTUREID || !(play || renderonce))
@@ -244,7 +273,7 @@ struct LottieAnim {
         }
 
         return false;
-}
+    }
 
     // Simple helper function to load an image into a DX11 texture with common settings
 #ifdef IMLOTTIE_DX11_IMPLEMENTATION
@@ -385,6 +414,11 @@ struct LottieRenderThread {
         commands.push(command);
     }
 
+    size_t getCommandNum()
+    {
+        return commands.size();
+    }
+
     std::thread independentThread;
     std::unordered_map<uint32_t, LottieAnim> animations;
 
@@ -438,9 +472,10 @@ struct LottieRenderThread {
 
         case LottieRenderCommand::DISCARD_PID:
         {
-            auto it = std::find_if( animations.begin(), animations.end(), [pid = cmd.pid](auto &a) { return a.second.pid == pid; });
-            if (it != animations.end())
+            auto it = animations.find(cmd.pid);
+            if (animations.find(cmd.pid) != animations.end()) {
                 animations.erase(it);
+            }
         } break;
 
         case LottieRenderCommand::SETUP_PID:
@@ -507,6 +542,36 @@ struct LottieRenderThread {
             }
         }
     }
+
+#ifdef IMLOTTIE_SIMPLE_IMPLEMENTATION
+    void simpleExecute() {
+        uint32_t lasttime = 0;
+        size_t commandNum = 0;
+        LottieRenderCommand cmd;
+        while (!terminating.load()) {
+            if (commandNum != getCommandNum()) {
+                if (popCommand(cmd)) {
+                    resolveCommand(cmd);
+                }
+            }
+
+            if (animations.empty()) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                continue;
+            }
+
+            if (lasttime != curtime) {
+                for (auto& [key, value] : animations) {
+                    value.updateCurtimeFrame((uint32_t)curtime);
+                }
+            }
+            else {
+                std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            }
+            lasttime = curtime;
+        }
+    }
+#endif
 };
 
 // mininmal info about lottie aninmation, need
@@ -635,11 +700,37 @@ struct LottieAnimationRenderer {
 
         renderThread.curtime = (float)ImGui::GetTime() * 1000.f;
     }
+
+#ifdef IMLOTTIE_SIMPLE_IMPLEMENTATION
+    void simpleUploadTex() {
+        for (auto & [k, anim_] : renderThread.animations)
+        {
+            if (!anim_.texture) {
+                anim_.createTextureFromData(anim_.currentFrame.data.data());
+
+                auto rit = std::find_if(animationsPresent.begin(), animationsPresent.end(), [pid = anim_.pid](auto& a) { return a.second.pid == pid; });
+                if (rit != animationsPresent.end())
+                    rit->second.srv = (ImTextureID)(intptr_t)anim_.srv;
+                break;
+            }
+            else {
+                anim_.updateTextureFromData(anim_.currentFrame.data.data());
+            }
+        }
+        renderThread.curtime = (float)ImGui::GetTime() * 1000.f;
+    }
+#endif
+
 #endif
 
     LottieAnimationRenderer() {
+#ifdef IMLOTTIE_SIMPLE_IMPLEMENTATION
+    std::thread independedThread([this] () { renderThread.simpleExecute(); });
+        independedThread.detach();
+#else
         std::thread independedThread([this] () { renderThread.execute(); });
         independedThread.detach();
+#endif
     }
 
     ~LottieAnimationRenderer() {
@@ -669,7 +760,9 @@ void LottieAnimation(const char *path, const ImVec2 &size, bool loop, int rate) 
     assert(detail::g_lottieRenderer);
     if (detail::g_lottieRenderer) {
         ImGuiID rid = detail::g_lottieRenderer->match(path, size.x, size.y, loop, rate);
+#ifndef IMLOTTIE_SIMPLE_IMPLEMENTATION
         detail::g_lottieRenderer->render(rid); // not really render, just send command to stack we need this texture
+#endif
         void *texture = detail::g_lottieRenderer->image(rid); // get texture from renderer or null if not present
         window->DrawList->AddImage((void *)texture, bb.Min, bb.Max, ImVec2(0, 0), ImVec2(1, 1), ImGui::GetColorU32(ImVec4(1, 1, 1, 1)));
     } else {
@@ -690,9 +783,15 @@ void destroy() {
 
 template<typename ... Args>
 void sync(Args... args) {
+#ifdef IMLOTTIE_SIMPLE_IMPLEMENTATION
+    if (detail::g_lottieRenderer) {
+        detail::g_lottieRenderer->simpleUploadTex(args...);
+    }
+#else
     if (detail::g_lottieRenderer) {
         detail::g_lottieRenderer->uploadReadyFramesToSysTex(args...);
     }
+#endif
 }
 
 #ifdef IMLOTTIE_DEMO
