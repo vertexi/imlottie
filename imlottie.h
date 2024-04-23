@@ -523,6 +523,8 @@ struct LottieRenderThread {
             if (animations.empty()) {
                 std::this_thread::sleep_for(std::chrono::milliseconds(100));
                 continue;
+            } else {
+                std::this_thread::sleep_for(std::chrono::milliseconds(1000/60));
             }
 
             // render animations and extract current animation frame to ready frames array
@@ -764,6 +766,38 @@ void LottieAnimation(const char *path, const ImVec2 &size, bool loop, int rate) 
     assert(detail::g_lottieRenderer);
     if (detail::g_lottieRenderer) {
         ImGuiID rid = detail::g_lottieRenderer->match(path, size.x, size.y, loop, rate);
+#ifndef IMLOTTIE_SIMPLE_IMPLEMENTATION
+        detail::g_lottieRenderer->render(rid); // not really render, just send command to stack we need this texture
+#endif
+        void *texture = detail::g_lottieRenderer->image(rid); // get texture from renderer or null if not present
+        window->DrawList->AddImage((void *)texture, bb.Min, bb.Max, ImVec2(0, 0), ImVec2(1, 1), ImGui::GetColorU32(ImVec4(1, 1, 1, 1)));
+    } else {
+        window->DrawList->AddRectFilled(bb.Min, bb.Max, 0xffffffff);
+    }
+}
+
+void LottieAnimation(const char *path, const ImVec2 &animSize, const ImVec2 &size, bool loop, int rate) {
+    ImVec2 pos, centre;
+    ImGuiWindow *window = ImGui::GetCurrentWindow();
+    if (window->SkipItems)
+        return;
+
+    ImGuiContext &g = *GImGui;
+    const ImGuiStyle &style = g.Style;
+    const ImGuiID id = window->GetID(path);
+
+    pos = window->DC.CursorPos;
+
+    const ImRect bb(pos, ImVec2(pos.x + size.x, pos.y + size.y));
+    ImGui::ItemSize(bb, style.FramePadding.y);
+
+    centre = bb.GetCenter();
+    if (!ImGui::ItemAdd(bb, id))
+        return;
+
+    assert(detail::g_lottieRenderer);
+    if (detail::g_lottieRenderer) {
+        ImGuiID rid = detail::g_lottieRenderer->match(path, animSize.x, animSize.y, loop, rate);
 #ifndef IMLOTTIE_SIMPLE_IMPLEMENTATION
         detail::g_lottieRenderer->render(rid); // not really render, just send command to stack we need this texture
 #endif
