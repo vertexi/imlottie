@@ -524,7 +524,7 @@ struct LottieRenderThread {
                 std::this_thread::sleep_for(std::chrono::milliseconds(100));
                 continue;
             } else {
-                std::this_thread::sleep_for(std::chrono::milliseconds(1000/60));
+                std::this_thread::sleep_for(std::chrono::milliseconds(1000/30));
             }
 
             // render animations and extract current animation frame to ready frames array
@@ -572,7 +572,7 @@ struct LottieRenderThread {
                 }
             }
             else {
-                std::this_thread::sleep_for(std::chrono::milliseconds(5));
+                std::this_thread::sleep_for(std::chrono::milliseconds(1000/30));
             }
             lasttime = curtime;
         }
@@ -729,19 +729,20 @@ struct LottieAnimationRenderer {
 
 #endif
 
-    LottieAnimationRenderer() {
+    LottieAnimationRenderer() : independedThread{}  {
 #ifdef IMLOTTIE_SIMPLE_IMPLEMENTATION
-    std::thread independedThread([this] () { renderThread.simpleExecute(); });
-        independedThread.detach();
+        independedThread = std::thread([this] () { renderThread.simpleExecute(); });
 #else
-        std::thread independedThread([this] () { renderThread.execute(); });
-        independedThread.detach();
+        independedThread = std::thread{[this] () { renderThread.execute(); }};
 #endif
     }
 
     ~LottieAnimationRenderer() {
         renderThread.terminating.store(true);
+        independedThread.join();
     }
+    private:
+        std::thread independedThread;
 };
 
 void LottieAnimation(const char *path, const ImVec2 &size, bool loop, int rate) {
